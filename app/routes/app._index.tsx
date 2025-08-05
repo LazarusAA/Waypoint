@@ -6,6 +6,12 @@ import { authenticate } from "../shopify.server";
 import { gemini } from "../lib/gemini.server";
 import { TitleBar } from "@shopify/app-bridge-react";
 
+// Helper function to extract JSON from AI response
+function extractJson(str: string): string | null {
+  const match = str.match(/\{[\s\S]*\}/);
+  return match ? match[0] : null;
+}
+
 // LOADER: Fetches existing products and their metafields
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
@@ -36,7 +42,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const prompt = `You are an expert customs agent. For the product titled "${productTitle}", provide a customs declaration. Return a single, minified JSON object with "customs_description" and "hs_code".`;
   const result = await gemini.generateContent(prompt);
-  const classification = JSON.parse(result.response.text());
+  const rawResponse = result.response.text();
+  const cleanJsonString = extractJson(rawResponse);
+
+  if (!cleanJsonString) {
+    console.error("🔴 Failed to extract JSON from AI response:", rawResponse);
+    throw new Response("Failed to parse AI response", { status: 500 });
+  }
+
+  const classification = JSON.parse(cleanJsonString);
 
   return json({ productId, ...classification });
 };
