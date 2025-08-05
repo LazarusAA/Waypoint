@@ -3,7 +3,7 @@
 client_id = "1552c371eee7f253cd2757be90e217d5"
 name = "Waypoint"
 handle = "waypoint"
-application_url = "https://happen-bacon-breed-negotiation.trycloudflare.com"
+application_url = "https://messenger-survey-printers-income.trycloudflare.com"
 embedded = true
 
 [webhooks]
@@ -22,7 +22,7 @@ api_version = "2025-07"
 scopes = "write_products"
 
 [auth]
-redirect_urls = ["https://happen-bacon-breed-negotiation.trycloudflare.com/auth/callback", "https://happen-bacon-breed-negotiation.trycloudflare.com/auth/shopify/callback", "https://happen-bacon-breed-negotiation.trycloudflare.com/api/auth/callback"]
+redirect_urls = ["https://messenger-survey-printers-income.trycloudflare.com/auth/callback", "https://messenger-survey-printers-income.trycloudflare.com/auth/shopify/callback", "https://messenger-survey-printers-income.trycloudflare.com/api/auth/callback"]
 
 [pos]
 embedded = false
