@@ -1,13 +1,12 @@
-import React from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Form, useLoaderData } from "@remix-run/react";
-import { Page, Layout, Card, BlockStack, Text, ResourceList, ResourceItem, Button } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
+import { Page, Layout, Card, BlockStack, Text, Button } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import { gemini } from "../lib/gemini.server";
+import { TitleBar } from "@shopify/app-bridge-react";
 
-// SERVER-SIDE LOADER: Fetches products when the page loads
+// LOADER: Fetches existing products and their metafields
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const response = await admin.graphql(
@@ -18,77 +17,95 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           node {
             id
             title
-            handle
+            hs_code: metafield(namespace: "waypoint", key: "hs_code") { value }
+            customs_description: metafield(namespace: "waypoint", key: "customs_description") { value }
           }
         }
       }
     }`
   );
   const responseJson = await response.json();
-  return json({
-    products: responseJson.data.products.edges,
-  });
+  return json({ products: responseJson.data.products.edges });
 };
 
-// SERVER-SIDE ACTION: Handles form submissions (e.g., button clicks)
+// ACTION: Called by the 'Classify' button. ONLY returns AI data.
 export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const productTitle = formData.get("productTitle") as string;
-  
-  const prompt = `You are an expert international customs agent. Your task is to generate a customs declaration for an e-commerce product.
-  Based on the product title "${productTitle}", perform two tasks:
-  1. Generate a concise, literal, and accurate product description suitable for a customs form. Avoid marketing jargon.
-  2. Determine the most likely 6-digit Harmonized System (HS) code for this item.
-  
-  Return the response as a single, minified JSON object with two keys: "customs_description" and "hs_code".`;
+  const productId = formData.get("productId") as string;
 
-  try {
-    const result = await gemini.generateContent(prompt);
-    const response = result.response;
-    const aiResponseText = response.text();
-    
-    // For now, we just log the response to the server console for verification.
-    console.log("✅ AI Classification successful for:", productTitle);
-    console.log("🤖 AI Response:", aiResponseText);
-    
-    return json({ success: true, data: aiResponseText });
-  } catch (error) {
-    console.error("🔴 AI Classification failed:", error);
-    return json({ success: false, error: "AI call failed" }, { status: 500 });
-  }
+  const prompt = `You are an expert customs agent. For the product titled "${productTitle}", provide a customs declaration. Return a single, minified JSON object with "customs_description" and "hs_code".`;
+  const result = await gemini.generateContent(prompt);
+  const classification = JSON.parse(result.response.text());
+
+  return json({ productId, ...classification });
 };
 
-// CLIENT-SIDE COMPONENT: Renders the UI
+// A new component for the "Save" button and its logic
+function SaveButton({ productId, classification }: { productId: string, classification: any }) {
+  const fetcher = useFetcher();
+  const isLoading = fetcher.state !== "idle";
+
+  return (
+    <fetcher.Form method="post" action="/api/save-metafields">
+      <input type="hidden" name="productId" value={productId} />
+      <input type="hidden" name="customsDescription" value={classification.customs_description} />
+      <input type="hidden" name="hsCode" value={classification.hs_code} />
+      <Button submit variant="primary" loading={isLoading}>
+        Save
+      </Button>
+    </fetcher.Form>
+  );
+}
+
+// A new component for each product row
+function ProductRow({ product }: { product: any }) {
+  const fetcher = useFetcher<typeof action>();
+  const isLoading = fetcher.state !== "idle";
+
+  // Check if the fetcher has returned data for THIS product row
+  const classificationData = fetcher.data && fetcher.data.productId === product.id ? fetcher.data : null;
+  const existingData = product.customs_description && product.hs_code ? { customs_description: product.customs_description.value, hs_code: product.hs_code.value } : null;
+  const displayData = classificationData || existingData;
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <Text as="h3" variant="headingMd">{product.title}</Text>
+        {displayData && (
+          <BlockStack gap="200">
+            <Text><b>Description:</b> {displayData.customs_description}</Text>
+            <Text><b>HS Code:</b> {displayData.hs_code}</Text>
+          </BlockStack>
+        )}
+        <div style={{display: 'flex', gap: '8px'}}>
+          <fetcher.Form method="post">
+            <input type="hidden" name="productId" value={product.id} />
+            <input type="hidden" name="productTitle" value={product.title} />
+            <Button submit loading={isLoading}>
+              {existingData ? 'Re-classify' : 'Classify'}
+            </Button>
+          </fetcher.Form>
+          {classificationData && <SaveButton productId={product.id} classification={classificationData} />}
+        </div>
+      </BlockStack>
+    </Card>
+  );
+}
+
+// MAIN COMPONENT
 export default function Index() {
   const { products } = useLoaderData<typeof loader>();
-
   return (
     <Page>
       <TitleBar title="Waypoint Product Dashboard" />
       <Layout>
         <Layout.Section>
-          <Card>
-            <ResourceList
-              resourceName={{ singular: 'product', plural: 'products' }}
-              items={products}
-              renderItem={(item: any) => {
-                const { id, title } = item.node;
-                return (
-                  <ResourceItem id={id} accessibilityLabel={`View details for ${title}`}>
-                    <BlockStack direction="row" align="space-between" inlineAlign="center">
-                      <Text variant="bodyMd" fontWeight="bold" as="h3">
-                        {title}
-                      </Text>
-                      <Form method="post">
-                        <input type="hidden" name="productTitle" value={title} />
-                        <Button submit={true}>Classify</Button>
-                      </Form>
-                    </BlockStack>
-                  </ResourceItem>
-                );
-              }}
-            />
-          </Card>
+          <BlockStack gap="500">
+            {products.map((p: any) => (
+              <ProductRow key={p.node.id} product={p.node} />
+            ))}
+          </BlockStack>
         </Layout.Section>
       </Layout>
     </Page>
